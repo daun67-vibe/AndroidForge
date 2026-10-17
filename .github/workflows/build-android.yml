@@ -348,6 +348,40 @@ jobs:
       # ---------------------------------------------------------------------
       # Step 12: Collect APKs (writes collect.json; runs even on build failure)
       # ---------------------------------------------------------------------
+
+
+    
+      - name: Sign TapLoop APK with stable key
+        if: steps.build.outputs.build_succeeded == 'true'
+        env:
+          TAPLOOP_KEYSTORE_BASE64: ${{ secrets.TAPLOOP_KEYSTORE_BASE64 }}
+          TAPLOOP_KEYSTORE_PASSWORD: ${{ secrets.TAPLOOP_KEYSTORE_PASSWORD }}
+          TAPLOOP_PROJECT_ROOT: ${{ steps.extract.outputs.project_root }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$TAPLOOP_KEYSTORE_BASE64" || -z "$TAPLOOP_KEYSTORE_PASSWORD" ]]; then
+            echo "::error::Missing signing secrets."
+            exit 1
+          fi
+          KEYDIR="$(mktemp -d)"
+          trap 'rm -rf "$KEYDIR"' EXIT
+          chmod 700 "$KEYDIR"
+          KEYSTORE="$KEYDIR/taploop-signing.jks"
+          printf '%s' "$TAPLOOP_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE"
+          UNSIGNED="$(find "$TAPLOOP_PROJECT_ROOT" -path '*/build/outputs/apk/debug/*.apk' -type f -name '*unsigned*.apk' -print -quit)"
+          if [[ -z "$UNSIGNED" || ! -f "$UNSIGNED" ]]; then
+            echo "::error::Could not find unsigned debug APK."
+            find "$TAPLOOP_PROJECT_ROOT" -path '*/build/outputs/apk/*' -type f -name '*.apk' -print || true
+            exit 1
+          fi
+          SIGNED="$(dirname "$UNSIGNED")/app-debug.apk"
+          APKSIGNER="$ANDROID_HOME/build-tools/34.0.0/apksigner"
+          "$APKSIGNER" sign --ks "$KEYSTORE" --ks-key-alias taploop --ks-pass "pass:$TAPLOOP_KEYSTORE_PASSWORD" --key-pass "pass:$TAPLOOP_KEYSTORE_PASSWORD" --out "$SIGNED" "$UNSIGNED"
+          "$APKSIGNER" verify "$SIGNED"
+          rm -f "$UNSIGNED"
+          echo "Signed APK with persistent key."
+          
       - name: Collect APKs
         id: collect
         if: always()
